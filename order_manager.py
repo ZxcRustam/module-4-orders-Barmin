@@ -9,162 +9,231 @@ def get_connection():
     return sqlite3.connect(DB_PATH)
 
 
-# ============================================
-# ЗАДАНИЕ 1.1. get_all_orders
-# ============================================
+# ====================================================================
+# 1.1. get_all_orders() — список всех заказов
+# ====================================================================
 def get_all_orders():
-    """
-    Возвращает список всех заказов.
-    :return: список кортежей (id, дата, клиент)
-    """
-    # TODO: Открой соединение через get_connection()
-    # TODO: Создай курсор
-    # TODO: Выполни SQL: SELECT id, дата, клиент FROM Заказ ORDER BY id DESC
-    # TODO: Получи все строки через cur.fetchall()
-    # TODO: Закрой соединение
-    # TODO: Верни список кортежей
-    pass
+    """Возвращает список всех заказов."""
+    conn = get_connection()
+    cur = conn.cursor()
+    
+    cur.execute("SELECT id, дата, клиент FROM Заказ ORDER BY id DESC")
+    orders = cur.fetchall()
+    
+    conn.close()
+    return orders
 
 
-# ============================================
-# ЗАДАНИЕ 1.2. get_order_by_id (вспомогательная)
-# ============================================
-def get_order_by_id(order_id):
-    """
-    Возвращает заказ по id.
-    :param order_id: id заказа
-    :return: кортеж (id, дата, клиент) или None
-    """
-    # TODO: Открой соединение
-    # TODO: Выполни SELECT id, дата, клиент FROM Заказ WHERE id = ?
-    # TODO: Получи row = cur.fetchone()
-    # TODO: Закрой соединение
-    # TODO: Верни row
-    pass
-
-
-# ============================================
-# ЗАДАНИЕ 1.3. get_order_items (JOIN)
-# ============================================
+# ====================================================================
+# 1.2. get_order_items(order_id) — состав заказа (JOIN)
+# ====================================================================
 def get_order_items(order_id):
     """
-    Возвращает состав заказа через JOIN.
+    Возвращает состав заказа.
     :param order_id: id заказа
-    :return: список кортежей (id, название, производитель,
-                              модель, количество, цена)
+    :return: список (id, название, производитель, модель, количество, цена)
     """
-    # TODO: Открой соединение
-    # TODO: Выполни JOIN таблиц Состав_заказа и Товар
-    #       ON Состав_заказа.товар_id = Товар.id
-    # TODO: Отфильтруй WHERE Состав_заказа.заказ_id = ?
-    # TODO: Передай (order_id,) как параметр
-    # TODO: Получи строки
-    # TODO: Верни результат
-    pass
+    conn = get_connection()
+    cur = conn.cursor()
+    
+    # Связываем таблицу Состав_заказа и Товар через JOIN
+    query = """
+        SELECT Состав_заказа.id, Товар.название, Товар.производитель, 
+               Товар.модель, Состав_заказа.количество, Состав_заказа.цена
+        FROM Состав_заказа
+        JOIN Товар ON Состав_заказа.товар_id = Товар.id
+        WHERE Состав_заказа.заказ_id = ?
+    """
+    cur.execute(query, (order_id,))
+    items = cur.fetchall()
+    
+    conn.close()
+    return items
 
 
-# ============================================
-# ЗАДАНИЕ 1.4. get_order_total
-# ============================================
+# ====================================================================
+# 1.3. get_order_total(order_id) — итоговая сумма
+# ====================================================================
 def get_order_total(order_id):
     """
     Возвращает итоговую сумму заказа.
     :param order_id: id заказа
     :return: сумма (float)
     """
-    # TODO: Открой соединение
-    # TODO: Выполни SELECT SUM(количество * цена)
-    #       FROM Состав_заказа WHERE заказ_id = ?
-    # TODO: Получи row = cur.fetchone()
-    # TODO: Верни row[0] если не None, иначе 0.0
-    pass
+    conn = get_connection()
+    cur = conn.cursor()
+    
+    cur.execute("SELECT SUM(количество * цена) FROM Состав_заказа WHERE заказ_id = ?", (order_id,))
+    row = cur.fetchone()
+    
+    conn.close()
+    
+    # Если в заказе нет позиций, SUM вернет None, тогда возвращаем 0.0
+    if row and row[0] is not None:
+        return float(row[0])
+    return 0.0
 
 
-# ============================================
-# ЗАДАНИЕ 1.5. create_order
-# ============================================
+# ====================================================================
+# 1.4. create_order(client, items) — создание заказа
+# ====================================================================
 def create_order(client, items):
     """
     Создаёт заказ с несколькими позициями.
     :param client: ФИО клиента
-    :param items: список (product_id, model, quantity, price)
+    :param items: список кортежей (product_id, model, quantity, price)
     :return: id заказа или None
     """
-    # TODO: Открой соединение и курсор
-    # TODO: Оберни в try-except-finally
-    # TODO: Получи дату: datetime.now().strftime("%Y-%m-%d")
-    # TODO: INSERT INTO Заказ (дата, клиент) VALUES (?, ?)
-    # TODO: order_id = cur.lastrowid
-    # TODO: Для каждой позиции из items:
-    #       - SELECT количество FROM Товар WHERE id = ?
-    #       - Если row[0] < quantity — raise ValueError
-    #       - INSERT INTO Состав_заказа
-    #       - UPDATE Товар SET количество = количество - ?
-    # TODO: conn.commit()
-    # TODO: Верни order_id
-    # TODO: В except — conn.rollback() и верни None
-    pass
+    conn = get_connection()
+    cur = conn.cursor()
+    
+    try:
+        # 1. Получаем текущую дату
+        current_date = datetime.now().strftime("%Y-%m-%d")
+        
+        # 2. Создаем запись в таблице Заказ
+        cur.execute("INSERT INTO Заказ (дата, клиент) VALUES (?, ?)", (current_date, client))
+        order_id = cur.lastrowid
+        
+        # 3. Добавляем позиции и уменьшаем остатки на складе
+        for product_id, model, quantity, price in items:
+            # Проверяем остаток товара на складе
+            cur.execute("SELECT количество FROM Товар WHERE id = ?", (product_id,))
+            row = cur.fetchone()
+            
+            if not row or row[0] < quantity:
+                # Если товара недостаточно, вызываем ошибку для отката транзакции
+                raise ValueError(f"Недостаточно товара с id {product_id} на складе.")
+            
+            # Добавляем в Состав_заказа
+            cur.execute(
+                "INSERT INTO Состав_заказа (заказ_id, товар_id, количество, цена) VALUES (?, ?, ?, ?)",
+                (order_id, product_id, quantity, price)
+            )
+            
+            # Списываем количество со склада
+            cur.execute(
+                "UPDATE Товар SET количество = количество - ? WHERE id = ?",
+                (quantity, product_id)
+            )
+            
+        conn.commit()
+        return order_id
+        
+    except Exception as e:
+        conn.rollback()
+        print(f"Ошибка при создании заказа: {e}")
+        return None
+    finally:
+        conn.close()
 
 
-# ============================================
-# ЗАДАНИЕ 1.6. delete_order
-# ============================================
+# ====================================================================
+# 1.5. delete_order(order_id) — удаление заказа
+# ====================================================================
 def delete_order(order_id):
     """
     Удаляет заказ и восстанавливает остатки.
-    :param order_id: id заказа
     :return: True или False
     """
-    # TODO: Открой соединение
-    # TODO: Оберни в try-except
-    # TODO: SELECT товар_id, количество FROM Состав_заказа
-    #       WHERE заказ_id = ?
-    # TODO: items = cur.fetchall()
-    # TODO: Для каждой позиции:
-    #       - UPDATE Товар SET количество = количество + ?
-    #         WHERE id = ?
-    # TODO: DELETE FROM Состав_заказа WHERE заказ_id = ?
-    # TODO: DELETE FROM Заказ WHERE id = ?
-    # TODO: conn.commit() и верни True
-    # TODO: В except — rollback и верни False
-    pass
+    conn = get_connection()
+    cur = conn.cursor()
+    
+    try:
+        # 1. Получаем все товары из этого заказа, чтобы вернуть их на склад
+        cur.execute("SELECT товар_id, количество FROM Состав_заказа WHERE заказ_id = ?", (order_id,))
+        items = cur.fetchall()
+        
+        # 2. Возвращаем остатки на склад
+        for product_id, quantity in items:
+            cur.execute(
+                "UPDATE Товар SET количество = количество + ? WHERE id = ?",
+                (quantity, product_id)
+            )
+            
+        # 3. Удаляем позиции из Состава_заказа
+        cur.execute("DELETE FROM Состав_заказа WHERE заказ_id = ?", (order_id,))
+        
+        # 4. Удаляем сам заказ
+        cur.execute("DELETE FROM Заказ WHERE id = ?", (order_id,))
+        
+        conn.commit()
+        return True
+        
+    except Exception as e:
+        conn.rollback()
+        print(f"Ошибка при удалении заказа: {e}")
+        return False
+    finally:
+        conn.close()
 
 
-# ============================================
-# ЗАДАНИЕ 1.7. update_order_date
-# ============================================
+# ====================================================================
+# 1.6. update_order_date(order_id, new_date) — изменение даты
+# ====================================================================
 def update_order_date(order_id, new_date):
     """
     Обновляет дату заказа.
-    :param order_id: id заказа
-    :param new_date: новая дата (YYYY-MM-DD)
-    :return: True
-    """
-    # TODO: Открой соединение
-    # TODO: UPDATE Заказ SET дата = ? WHERE id = ?
-    # TODO: conn.commit()
-    # TODO: Закрой соединение
-    # TODO: Верни True
-    pass
-
-
-# ============================================
-# ЗАДАНИЕ 1.8. delete_order_item
-# ============================================
-def delete_order_item(item_id):
-    """
-    Удаляет позицию и восстанавливает остаток.
-    :param item_id: id позиции в Состав_заказа
     :return: True или False
     """
-    # TODO: Открой соединение
-    # TODO: Оберни в try-except
-    # TODO: SELECT товар_id, количество FROM Состав_заказа
-    #       WHERE id = ?
-    # TODO: product_id, quantity = cur.fetchone()
-    # TODO: DELETE FROM Состав_заказа WHERE id = ?
-    # TODO: UPDATE Товар SET количество = количество + ?
-    #       WHERE id = ?
-    # TODO: conn.commit() и верни True
-    # TODO: В except — rollback и верни False
-    pass
+    conn = get_connection()
+    cur = conn.cursor()
+    
+    try:
+        cur.execute("UPDATE Заказ SET дата = ? WHERE id = ?", (new_date, order_id))
+        conn.commit()
+        return True
+    except Exception as e:
+        print(f"Ошибка при изменении даты: {e}")
+        return False
+    finally:
+        conn.close()
+
+
+# ====================================================================
+# 1.7. delete_order_item(item_id) — удаление позиции
+# ====================================================================
+def delete_order_item(item_id):
+    """
+    Удаляет позицию из заказа и восстанавливает остаток товара на складе.
+    :return: True или False
+    """
+    conn = get_connection()
+    cur = conn.cursor()
+    
+    try:
+        # 1. Находим товар_id и количество удаляемой позиции
+        cur.execute("SELECT товар_id, количество FROM Состав_заказа WHERE id = ?", (item_id,))
+        row = cur.fetchone()
+        
+        if row:
+            product_id, quantity = row
+            
+            # 2. Удаляем позицию из состава заказа
+            cur.execute("DELETE FROM Состав_заказа WHERE id = ?", (item_id,))
+            
+            # 3. Возвращаем товар на склад
+            cur.execute(
+                "UPDATE Товар SET количество = количество + ? WHERE id = ?",
+                (quantity, product_id)
+            )
+            
+            conn.commit()
+            return True
+        return False
+        
+    except Exception as e:
+        conn.rollback()
+        print(f"Ошибка при удалении позиции заказа: {e}")
+        return False
+    finally:
+        conn.close()
+
+def get_order_by_id(order_id):
+    """Возвращает информацию о конкретном заказе по его id."""
+    conn = get_connection()
+    cur = conn.cursor()
+    cur.execute("SELECT id, дата, клиент FROM Заказ WHERE id = ?", (order_id,))
+    order = cur.fetchone()
+    conn.close()
+    return order
